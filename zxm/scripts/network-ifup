@@ -1,0 +1,17 @@
+#!/bin/sh
+set -x
+
+
+if [ -n "$1" ];then
+    ip tuntap add $1 mode tap
+    ip addr add 172.16.0.1/24 dev $1
+    ip link set $1 up
+    sleep 0.5s
+    iptables -t nat -A POSTROUTING -o ens8f0 -j MASQUERADE
+    iptables -A FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+    iptables -A FORWARD -i tap0 -o ens8f0 -j ACCEPT
+    exit 0
+else
+    echo "Error: no interface specified"
+    exit 1
+fi

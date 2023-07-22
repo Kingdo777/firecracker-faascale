@@ -1,0 +1,13 @@
+#!/bin/sh
+set -x
+
+
+if [ -n "$1" ];then
+    ip link del tap0
+    sleep 0.5s
+    iptables -F
+    exit 0
+else
+    echo "Error: no interface specified"
+    exit 1
+fi
