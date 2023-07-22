@@ -28,33 +28,68 @@ use super::{
 use crate::devices::virtio::balloon::Error as BalloonError;
 use crate::devices::virtio::{IrqTrigger, IrqType};
 
+/// SIZE_OF_U32和SIZE_OF_STAT，分别表示u32和BalloonStat类型的大小（以字节为单位）
 const SIZE_OF_U32: usize = std::mem::size_of::<u32>();
+/// std::mem::size_of函数来获取类型的大小
 const SIZE_OF_STAT: usize = std::mem::size_of::<BalloonStat>();
 
+/// 将以MB为单位的数量转换为以4KB页面为单位的数量, 如果乘法不会导致溢出，返回乘法结果，否则返回一个溢出错误
 fn mib_to_pages(amount_mib: u32) -> Result<u32, BalloonError> {
     amount_mib
         .checked_mul(MIB_TO_4K_PAGES)
         .ok_or(BalloonError::TooManyPagesRequested)
 }
 
+/// 将以4KB页面为单位的数量转换为以MB为单位的数量
 fn pages_to_mib(amount_pages: u32) -> u32 {
     amount_pages / MIB_TO_4K_PAGES
 }
 
-#[repr(C)]
+#[repr(C)] /// #[repr(C)] 表示按照 C 语言的内存布局方式对结构体进行排列
+/// 这是 Rust 中的一个派生宏（derive macro）的示例，这个宏会自动为一个结构体或者枚举类型实现一些常用的 trait 方法。
+/// 具体来说，这个宏实现了 Clone、Copy、Debug、Default 和 PartialEq 这几个 trait。其中：
+///     1. Clone trait 表示这个类型可以通过复制本身来创建一个新的对象，这个新对象与原对象是独立的。
+///     2. Copy trait 表示这个类型可以通过直接复制内存来创建一个新的对象，这个新对象与原对象也是独立的。需要注意的是，Copy trait 只适用于简单的、内存连续的数据类型，如整数、浮点数、布尔值、指针、元组等等。
+///     3. Debug trait 表示这个类型可以通过调试输出的方式展示自己。
+///     4. Default trait 表示这个类型可以通过默认值来创建一个新的对象。
+///     5. PartialEq trait 表示这个类型可以进行等值比较操作。
+/// 通过使用派生宏可以减少开发者的工作量，简化代码实现过程，同时也可以避免一些常见的错误。需要注意的是，派生宏需要应用在符合某些限制的结构体或枚举上，
+/// 这些限制包括类型必须是 Plain Old Data（POD）类型、不能包含泛型参数等等。如果遇到不符合限制的情况，编译器会产生相应的错误提示
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
+/// 用于表示一个设备的配置空间信息，通过这个结构体可以获取设备所占的内存页数和实际使用的内存页数
 pub(crate) struct ConfigSpace {
+    /// pub(crate) 表示这个结构体只能在当前 crate 中被公开访问，对于外部 crate 不可见
     pub num_pages: u32,
     pub actual_pages: u32,
 }
 
 // SAFETY: Safe because ConfigSpace only contains plain data.
+/// ByteValued，用于指示一个类型在内存中表示为连续的字节序列，并且可以使用字节级别的操作来修改和访问这个类型的值。
+/// 因为 ConfigSpace 只包含普通数据，即不包含 Rust 的不安全特性（如指针、裸指针、裸指针的解引用等等），因此可以保证在内存中表示为连续的字节序列
+/// 需要注意的是，虽然这段代码本身被标记为“安全”（unsafe impl），但是仍然存在一定的潜在风险。因为在 Rust 中，
+/// unsafe 代码允许对内存进行更底层、更直接的操作，而这些操作可能会违反 Rust 的所有权和借用系统，导致内存安全方面的问题。
+/// 因此，一般来说，开发者在编写 unsafe 代码时必须保证其代码正确性和安全性，否则可能会导致不可预期的后果。
 unsafe impl ByteValued for ConfigSpace {}
 
 // This structure needs the `packed` attribute, otherwise Rust will assume
 // the size to be 16 bytes.
 #[derive(Copy, Clone, Debug, Default)]
+/// #[repr(C, packed)]：这个元属性告诉编译器按照 C 语言的结构体定义方式来布局这个结构体的字段。
+/// 其中 packed 表示告诉编译器不要为了对齐而填充字节。如果不加 packed，编译器会默认按照 8 字节的倍数来对齐字段，导致这个结构体的大小是 16 字节，而不是实际需要的 10 字节。
+/// 这个结构体通常是用作气球（Balloon）的统计信息，也可能在其他场景下使用，比如和硬件打交道时需要处理原始二进制数据。
+/// 为了确保不会因为编译器的结构体布局差异而导致代码行为异常，使用 repr(C) 和 packed 是一个很好的做法。
 #[repr(C, packed)]
+/// The statistics tags. 对应了下面的struct BalloonStats
+/// const VIRTIO_BALLOON_S_SWAP_IN: u16 = 0;
+/// const VIRTIO_BALLOON_S_SWAP_OUT: u16 = 1;
+/// const VIRTIO_BALLOON_S_MAJFLT: u16 = 2;
+/// const VIRTIO_BALLOON_S_MINFLT: u16 = 3;
+/// const VIRTIO_BALLOON_S_MEMFREE: u16 = 4;
+/// const VIRTIO_BALLOON_S_MEMTOT: u16 = 5;
+/// const VIRTIO_BALLOON_S_AVAIL: u16 = 6;
+/// const VIRTIO_BALLOON_S_CACHES: u16 = 7;
+/// const VIRTIO_BALLOON_S_HTLB_PGALLOC: u16 = 8;
+/// const VIRTIO_BALLOON_S_HTLB_PGFAIL: u16 = 9;
 struct BalloonStat {
     pub tag: u16,
     pub val: u64,
@@ -64,37 +99,55 @@ struct BalloonStat {
 unsafe impl ByteValued for BalloonStat {}
 
 // BalloonStats holds statistics returned from the stats_queue.
+/// Serialize trait 则用于将一个结构体序列化成字节序列，方便存储或传输数据
+/// PartialEq 和 Eq 都是 Rust 中的 trait，都用于比较两个值是否相等。它们的区别在于 Eq 是 PartialEq 的子集，
+/// 即 Eq trait 要求实现的 PartialEq 方法还需要满足传递性（transitivity）：如果 A == B 且 B == C，则 A == C。
 #[derive(Clone, Default, Debug, PartialEq, Eq, Serialize)]
 pub struct BalloonConfig {
     pub amount_mib: u32,
+    // 表示气球内存大小（以 MiB 为单位）
     pub deflate_on_oom: bool,
-    pub stats_polling_interval_s: u16,
+    // 在 Out Of Memory（OOM，内存不足）时是否启用"收紧气球"
+    pub stats_polling_interval_s: u16, // 轮询统计信息的时间间隔（以秒为单位）
 }
 
 // BalloonStats holds statistics returned from the stats_queue.
 #[derive(Clone, Default, Debug, PartialEq, Eq, Serialize)]
+/// 这个属性是用在 Rust 的序列化/反序列化库 serde 上的，它的作用是告诉 serde 在反序列化时不要忽略掉任何未知的字段。
+/// 如果数据格式中包含了未知的字段，而没有使用 #[serde(deny_unknown_fields)] 属性的话，在反序列化时 serde 会默默地忽略掉这些字段，
+/// 但如果使用了这个属性，serde 就会抛出错误，通知我们输入的数据格式中包含了未知字段。
+/// 这个属性一般用在反序列化时，特别是在处理外部输入的数据时会非常有用。它可以让我们更加严格地验证输入的数据，避免一些意外情况的发生。
+/// 同时，对于一些已经规定好数据格式的应用中，使用这个属性也可以帮助我们快速发现问题，比如数据格式的变化带来的兼容性问题。
 #[serde(deny_unknown_fields)]
 pub struct BalloonStats {
+    /// 注意，前四项是通过ConfigSpace进行更新和转化的，后面的内容，是由Guest提供的
+    /// 目标页数和实际页数
     pub target_pages: u32,
     pub actual_pages: u32,
+    /// 目标内存（以 MiB 为单位）和实际内存
     pub target_mib: u32,
     pub actual_mib: u32,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// 用于记录交换（swap in/out）的数据
+    #[serde(skip_serializing_if = "Option::is_none")] /// 通过 Serialize 特性序列化成 JSON 格式时，若字段的值为 None，则会跳过序列化
     pub swap_in: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub swap_out: Option<u64>,
+    /// 用于记录主页面故障（major fault）和次页面故障（minor fault）的次数
     #[serde(skip_serializing_if = "Option::is_none")]
     pub major_faults: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub minor_faults: Option<u64>,
+    /// 记录空闲、总共和可用内存的大小
     #[serde(skip_serializing_if = "Option::is_none")]
     pub free_memory: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_memory: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub available_memory: Option<u64>,
+    /// 用于缓存磁盘数据的内存大小
     #[serde(skip_serializing_if = "Option::is_none")]
     pub disk_caches: Option<u64>,
+    /// 用于记录大页（huge pages）的分配和失败次数
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hugetlb_allocations: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -102,6 +155,8 @@ pub struct BalloonStats {
 }
 
 impl BalloonStats {
+    /// 用来更新结构体中的字段值。将输入的BalloonStat，更新到BalloonStats结构体中
+    /// 该方法的输入参数是一个 &BalloonStat 类型的引用，输出结果是一个 Result 类型，如果更新操作成功，返回 Ok(())，否则返回 Err(BalloonError::MalformedPayload)。
     fn update_with_stat(&mut self, stat: &BalloonStat) -> Result<(), BalloonError> {
         let val = Some(stat.val);
         match stat.tag {
@@ -128,29 +183,54 @@ impl BalloonStats {
 pub struct Balloon {
     // Virtio fields.
     pub(crate) avail_features: u64,
+    /// 表示设备支持的功能，其中 avail_features 是未被确认的功能，acked_features 是已经确认支持的功能。
     pub(crate) acked_features: u64,
     pub(crate) config_space: ConfigSpace,
+    /// 表示设备的配置空间，包含一些指定设备参数的字段: 设备所占的内存页数和实际使用的内存页数
     pub(crate) activate_evt: EventFd,
+    /// 激活设备的事件, 可以使用 EventFd 监视文件描述符，当它们发生变化时，就会触发事件。这个功能在 Unix 和 Linux 操作系统中被广泛使用，比如在网络编程中，监听文件描述符上的数据是否可读/可写。
 
     // Transport related fields.
     pub(crate) queues: Vec<Queue>,
+    // 表示设备的消息队列，其中 queues 是消息队列的描述符，queue_evts 是消息队列的事件描述符。
     pub(crate) queue_evts: [EventFd; NUM_QUEUES],
+    // [EventFd; NUM_QUEUES] 是一个 Rust 数组类型，它包含了 NUM_QUEUES 个 EventFd 对象。
     pub(crate) device_state: DeviceState,
-    pub(crate) irq_trigger: IrqTrigger,
+    // 表示设备的状态，比如设备是否激活、是否可接受消息等。
+    pub(crate) irq_trigger: IrqTrigger, // 表示设备的中断触发器
 
     // Implementation specific fields.
     pub(crate) restored: bool,
+    // 表示设备是否已经恢复过。
     pub(crate) stats_polling_interval_s: u16,
+    // 表示统计信息轮询的时间间隔，单位为秒。
     pub(crate) stats_timer: TimerFd,
+    // 表示统计信息轮询定时器。
     // The index of the previous stats descriptor is saved because
     // it is acknowledged after the stats queue is processed.
     pub(crate) stats_desc_index: Option<u16>,
+    // 表示上一次处理的统计信息描述符的索引，这个索引在统计信息队列被处理后会被确认。
     pub(crate) latest_stats: BalloonStats,
+    // 表示最新的设备统计信息。
     // A buffer used as pfn accumulator during descriptor processing.
-    pub(crate) pfn_buffer: [u32; MAX_PAGE_COMPACT_BUFFER],
+    pub(crate) pfn_buffer: [u32; MAX_PAGE_COMPACT_BUFFER], // 表示在描述符处理过程中用作页面帧号累加器的缓冲区。
 }
 
 impl Balloon {
+    /// 这段 Rust 代码定义了一个名为 `new` 的 pub 方法，它接受四个参数 `amount_mib`, `deflate_on_oom`, `stats_polling_interval_s`, `restored`，并返回一个 `Result<Balloon, BalloonError>` 类型的结果。
+    //
+    /// 代码中首先创建了一个 `queue_evts` 数组，它包含三个 `EventFd` 对象，并配置为非阻塞模式。
+    /// `EventFd` 对象用于通知 Balloon 设备块哪些事件已经发生，并允许 Balloon 设备块阻塞等待这些事件。
+    /// 然后，使用 `QUEUE_SIZES` 数组创建了一个 `queues` 向量，它包含三个 `Queue` 对象，分别对应 Balloon 设备块的三个队列。
+    /// 在这个向量创建之后，如果统计信息轮询间隔 `stats_polling_interval_s` 等于零，就从队列中删除处理器使用的每个统计信息队列。
+    /// 否则，将其标记为启用，这将设置另一个标志位来表示是否启用了统计信息队列。
+    //
+    /// 接下来，定义了一个名为 `stats_timer` 的 `TimerFd` 对象，它用于定期轮询 Balloon 设备块以获取它当前的统计信息。
+    /// 如果发生错误，则方法会返回 `BalloonError::Timer` 作为错误结果。
+    //
+    /// 接下来定义了一个名为 `Balloon` 的实例对象并返回它。在 Balloon 实例对象的构造过程中，将上文的 `queue_evts` 数组和 `queues` 向量初始化到实例对象中。
+    /// 除此之外，还初始化了一些其他的字段，包括 `avail_features`、`acked_features`、`config_space` 等等，这些字段闯入在 `Balloon` 结构体中。
+    /// 如果构造函数执行过程中发生错误，则将错误封装为 `BalloonError`，并通过 `Result<Balloon, BalloonError>` 返回错误结果。
     pub fn new(
         amount_mib: u32,
         deflate_on_oom: bool,
@@ -167,12 +247,17 @@ impl Balloon {
             avail_features |= 1u64 << VIRTIO_BALLOON_F_STATS_VQ;
         }
 
+        // 给每个队列挂上一个eventFD，和pistache中的队列设计完全一样
         let queue_evts = [
             EventFd::new(libc::EFD_NONBLOCK).map_err(BalloonError::EventFd)?,
             EventFd::new(libc::EFD_NONBLOCK).map_err(BalloonError::EventFd)?,
             EventFd::new(libc::EFD_NONBLOCK).map_err(BalloonError::EventFd)?,
         ];
 
+        // QUEUE_SIZES中记录了每个队列的大小
+        // 其中 QUEUE_SIZES 是一个包含多个 u16 类型数据的数组，表示每个队列的大小。iter() 方法用于返回一个表示数组元素序列的迭代器，
+        // map() 方法对迭代器的每个元素应用给定的闭包函数进行转换，而在这里闭包函数的作用是将每个队列的大小作为参数创建一个新的 Queue 类型的实例，
+        // 最后通过 collect() 方法将转换后的所有实例收集到一个 Vec 容器中。
         let mut queues: Vec<Queue> = QUEUE_SIZES.iter().map(|&s| Queue::new(s)).collect();
 
         // The VirtIO specification states that the statistics queue should
@@ -181,6 +266,7 @@ impl Balloon {
             let _ = queues.remove(STATS_INDEX);
         }
 
+        // TimerFD 时间轮询器
         let stats_timer =
             TimerFd::new_custom(ClockId::Monotonic, true, true).map_err(BalloonError::Timer)?;
 
@@ -188,14 +274,16 @@ impl Balloon {
             avail_features,
             acked_features: 0u64,
             config_space: ConfigSpace {
-                num_pages: mib_to_pages(amount_mib)?,
-                actual_pages: 0,
+                num_pages: mib_to_pages(amount_mib)?, // 气球设备的页面数
+                actual_pages: 0, // 气球设备的实际页面数
             },
             queue_evts,
             queues,
             irq_trigger: IrqTrigger::new().map_err(BalloonError::EventFd)?,
             device_state: DeviceState::Inactive,
+            /// 初始设备的状态为未激活
             activate_evt: EventFd::new(libc::EFD_NONBLOCK).map_err(BalloonError::EventFd)?,
+            /// 用于激活的event
             restored,
             stats_polling_interval_s,
             stats_timer,
@@ -205,11 +293,24 @@ impl Balloon {
         })
     }
 
+    /// 以下是 Balloon 设备块的 Rust 实现中，四个处理队列事件的方法。
+    /// 这四个方法分别是 process_inflate_queue_event()、process_deflate_queue_event()、process_stats_queue_event() 和 process_stats_timer_event()。
+    /// 它们的共同作用是监控对应队列的事件（EventFd），并在其中发现新事件时执行相应的操作。
+    ///
+    /// 每个方法都返回一个 Result 类型的值，其中包含了可能发生的 BalloonError（一个自定义的错误类型）以及方法执行后得到的结果。每个方法的实现非常相似，都包含以下三个步骤：
+    ///
+    /// 1. 通过 queue_evts 数组获取对应事件的 EventFd（分别为 INFLATE_INDEX、DEFLATE_INDEX 和 STATS_INDEX）。这个数组记录了 Balloon 设备块中所有 EventFd 句柄；
+    /// 2. 使用 read() 函数等待一个事件的发生。如果在等待时出现错误，则直接将错误通过 map_err() 函数转换成 BalloonError 类型的错误并返回；
+    /// 3. 根据方法名，分别调用 process_inflate_queue()、process_deflate_queue()、process_stats_queue() 或 trigger_stats_update() 函数进行队列处理。
     pub(crate) fn process_inflate_queue_event(&mut self) -> Result<(), BalloonError> {
+        // BalloonError::EventFd 是一个自定义的错误类型，表示 EventFd 的创建和操作失败。
+        // map_err(BalloonError::EventFd) 的作用是将可能在 EventFd 创建和操作过程中出现的错误转换为 BalloonError::EventFd 类型的错误。
+        // ? 运算符用于在错误出现时快速返回并传播错误，它的作用类似于 try catch 语句。如果结果是 Ok，则该运算符将返回 Ok 中的值，否则将立即返回错误。
+        // 因此，这行代码表示，如果 map_err 返回错误，将立即返回错误，否则继续执行下面的代码。
         self.queue_evts[INFLATE_INDEX]
             .read()
             .map_err(BalloonError::EventFd)?;
-        self.process_inflate()
+        self.process_inflate_queue()
     }
 
     pub(crate) fn process_deflate_queue_event(&mut self) -> Result<(), BalloonError> {
@@ -231,8 +332,26 @@ impl Balloon {
         self.trigger_stats_update()
     }
 
-    pub(crate) fn process_inflate(&mut self) -> Result<(), BalloonError> {
+
+    /// 这段代码实现了 BalloonDevice 中的 process_inflate_queue 函数。当 BalloonDevice 接收到来自 VM 的膨胀请求时，process_inflate_queue 函数会被调用来处理这个请求。
+    ///
+    /// 函数的实现主要分为以下几个步骤：
+    ///
+    /// 1. 通过 self.device_state.mem() 获取到 VM 的内存空间。
+    /// 2. 更新 METRICS 相关的数据。
+    /// 3. 获取到inflate queue。
+    /// 4. 通过 while 循环，逐一处理队列中的 Descriptor Chain。
+    /// 5. 对每一个 Descriptor Chain 进行处理，将 PFN（Page Frame Number）加入到 pfn_buffer 中，并对其进行合法性检查。
+    /// 6. 在每个 Descriptor Chain 处理完成后，对 pfn_buffer 中的所有 PFN 进行压缩处理，将相同连续的 PFN 进行合并。
+    /// 7. 依次移除队列中的每个连续的 PFN，直到队列中所有连续的 PFN 均移除。
+    /// 8. 如果标志位 needs_interrupt 被标记为 true，需要向 VM 发送中断信号。
+    /// 在这个过程中，整个函数体贯穿着对错误类型 BalloonError 的处理，具体包括解包、封装、抛出等操作，以保证程序在出现任何错误时能够正常退出并返回相应的错误信息。
+    ///
+    pub(crate) fn process_inflate_queue(&mut self) -> Result<(), BalloonError> {
         // This is safe since we checked in the event handler that the device is activated.
+        // device_state，指示Balloon 设备是否被激活，激活时需要提供用于表示设备所附加的内存区域的GuestMemoryMmap 的参数，这里的.mem()就是返回这个
+        // self.device_state.mem() 返回了一个 Option 类型的值，表示可能存在一个内存区域。但在这里，我们通过 unwrap() 方法解包了这个值，也就是说，
+        // 如果 self.device_state.mem() 返回了 None，那么程序会崩溃并抛出一个 panic。但是，由于前面的事件处理程序已经检查了该设备是否已经激活，所以这里使用 unwrap() 方法是安全的。
         let mem = self.device_state.mem().unwrap();
         METRICS.balloon.inflate_count.inc();
 
@@ -248,13 +367,29 @@ impl Balloon {
             // Internal loop processes descriptors and acummulates the pfns in `pfn_buffer`.
             // Breaks out when there is not enough space in `pfn_buffer` to completely process
             // the next descriptor.
+            // 循环地从队列中取走IO请求，即一个Descriptor的链表,返回值为链表的头，数据类型为即一个DescriptorChain
+            // 需要注意的是，这段循环的代码是存在Bug的，即每个 queue.pop(mem) ， 得到的都是一个链表，而非一个Descriptor(对应于结构体DescriptorChain)
+            // 而head正是链表的头部，因此按道理应该是，从head遍历整个链表来获取完整的IO请求，但是在下面的代码实现中，并没有对链表进行遍历，而仅仅是读取了
+            // head的内容。尽管如此，这段代码并不会出问题，因为Linux内核，会将每1MB的page，即256个PFN作为一次IO请求，写入到Queue中。因此每个IO请求
+            // 的Descriptor链表，确实只有一个Descriptor，因此不需要对其进行遍历
+            // （一个IO请求，对应了Linux内核中的一个散列表，Linux balloon使用了sg_init_one来初始化，所以其散列表中只有一个Descriptor）
             while let Some(head) = queue.pop(mem) {
-                let len = head.len as usize;
-                let max_len = MAX_PAGES_IN_DESC * SIZE_OF_U32;
+                println!("{:?}", head);
+                let len = head.len as usize; // 获取该Descriptor的数据区的大小，数据区存放的是guest返回的PFN
+                /*
+                 * 需要知道，在Linux内核中，用于传输的PFN的数据结构为：
+                 * __virtio32 pfns[VIRTIO_BALLOON_ARRAY_PFNS_MAX];
+                 * 因此，这个数据的类型就是U32，而这个数组的大小是：
+                 * #define VIRTIO_BALLOON_ARRAY_PFNS_MAX 256
+                 */
+                let max_len = MAX_PAGES_IN_DESC * SIZE_OF_U32; // 每个Descriptor最多存放256个PFN，也即1MB
                 valid_descs_found = true;
 
-                if !head.is_write_only() && len % SIZE_OF_U32 == 0 {
+                // head的数据区就是内核传输过来的pfns数组，因此其数据区的长度一定是整除SIZE_OF_U32的
+                // is_write_only 为真表明，这个descriptors对于Device是write_only,而对于driver是read_only，显然在这里，应该对于firecracker应该是只读的
+                if !head.is_write_only() && len % SIZE_OF_U32 == 0 { //
                     // Check descriptor pfn count.
+                    // head的长度肯定不能超过最大的长度限制，即其最多存放256个pfn
                     if len > max_len {
                         error!(
                             "Inflate descriptor has bogus page count {} > {}, skipping.",
@@ -267,22 +402,30 @@ impl Balloon {
                     }
                     // Break loop if `pfn_buffer` will be overrun by adding all pfns from current
                     // desc.
+                    // firecracker会将所有要释放的pfn统一到一个pfn_buffer中，然后进行收缩处理，即尝试识别连续的pfn
+                    // pfn_buffer的大小是MAX_PAGE_COMPACT_BUFFER=2048，当个pfn_buffer的大小不足以装下本次循环的
+                    // Descriptor中的fpn时，将会退出循环，然后处理这一批的pfn，注意我们前面设置了valid_descs_found = true;
+                    // 因此当上一批的fpn处理完成后，循环将会继续
                     if MAX_PAGE_COMPACT_BUFFER - pfn_buffer_idx < len / SIZE_OF_U32 {
                         queue.undo_pop();
                         break;
                     }
 
                     // This is safe, `len` was validated above.
+                    // 循环的遍历出Descriptor的数据区中所有的pfn
                     for index in (0..len).step_by(SIZE_OF_U32) {
+                        // head.addr 是数据区的首地址，加上index后，就是每个fpn的地址，整个地址是虚拟机的物理地址
                         let addr = head
                             .addr
                             .checked_add(index as u64)
                             .ok_or(BalloonError::MalformedDescriptor)?;
 
+                        // 通过mem.read_obj，将pfn读出来
                         let page_frame_number = mem
                             .read_obj::<u32>(addr)
                             .map_err(|_| BalloonError::MalformedDescriptor)?;
 
+                        // 将每个pfn加入到pfn_buffer中
                         self.pfn_buffer[pfn_buffer_idx] = page_frame_number;
                         pfn_buffer_idx += 1;
                     }
@@ -290,6 +433,7 @@ impl Balloon {
 
                 // Acknowledge the receipt of the descriptor.
                 // 0 is number of bytes the device has written to memory.
+                // 告诉guest，我们已经读取完成了一个IO请求，其可以将指定的descriptor给释放掉。
                 queue
                     .add_used(mem, head.index, 0)
                     .map_err(BalloonError::Queue)?;
@@ -297,10 +441,13 @@ impl Balloon {
             }
 
             // Compact pages into ranges.
+            // 将连续的pfn给合并，放入到page_ranges中，同时pfn_buffer被清空
             let page_ranges = compact_page_frame_numbers(&mut self.pfn_buffer[..pfn_buffer_idx]);
             pfn_buffer_idx = 0;
 
             // Remove the page ranges.
+            // 通过pfn，获取其对应的虚拟机的物理内存地址，以及待释放范围的长度
+            // 首先根据该地址找到物理机虚拟内存的地址，然后使用madvise的MADV_DONTNEED操作将指定的内存映射给取消
             for (page_frame_number, range_len) in page_ranges {
                 let guest_addr =
                     GuestAddress(u64::from(page_frame_number) << VIRTIO_BALLOON_PFN_SHIFT);
@@ -314,7 +461,7 @@ impl Balloon {
                 }
             }
         }
-
+        // 告诉虚拟机，我们已经完成了对一组pfn的释放，通常就是释放了1MB，因为Linux内核只有在收到VMM的回信之后才会发下一组pfn
         if needs_interrupt {
             self.signal_used_queue()?;
         }
@@ -322,6 +469,8 @@ impl Balloon {
         Ok(())
     }
 
+    // 对于收缩气球，也就是扩展VM的内存，firecracker是没有进行任何操作的，也就是，完全靠pagefault来填充物理内存
+    // 因为对于使用MADV_DONTNEED的私有匿名页而言，下一次读会重新的分配物理内存，并按零填充
     pub(crate) fn process_deflate_queue(&mut self) -> Result<(), BalloonError> {
         // This is safe since we checked in the event handler that the device is activated.
         let mem = self.device_state.mem().unwrap();
@@ -344,7 +493,7 @@ impl Balloon {
         }
     }
 
-    pub(crate) fn process_stats_queue(&mut self) -> std::result::Result<(), BalloonError> {
+    pub(crate) fn process_stats_queue(&mut self) -> Result<(), BalloonError> {
         // This is safe since we checked in the event handler that the device is activated.
         let mem = self.device_state.mem().unwrap();
         METRICS.balloon.stats_updates_count.inc();
@@ -391,7 +540,7 @@ impl Balloon {
 
     /// Process device virtio queue(s).
     pub fn process_virtio_queues(&mut self) {
-        let _ = self.process_inflate();
+        let _ = self.process_inflate_queue();
         let _ = self.process_deflate_queue();
     }
 
@@ -399,6 +548,7 @@ impl Balloon {
         BALLOON_DEV_ID
     }
 
+    // 周期性的告诉guest，获取的states信息
     fn trigger_stats_update(&mut self) -> Result<(), BalloonError> {
         // This is safe since we checked in the event handler that the device is activated.
         let mem = self.device_state.mem().unwrap();
@@ -418,6 +568,8 @@ impl Balloon {
 
     pub fn update_size(&mut self, amount_mib: u32) -> Result<(), BalloonError> {
         if self.is_activated() {
+            // 这个指令非常的关键，vmm通过配置空间，向guest传达，我希望将气球调节至多大，因此需要写入config_space.num_pages
+            // guest会读取此数值，然后根据当前气球的大小进行调整，并将最终的实际调节结果写入到config_space.actul_pages
             self.config_space.num_pages = mib_to_pages(amount_mib)?;
             self.irq_trigger
                 .trigger_irq(IrqType::Config)
@@ -427,6 +579,7 @@ impl Balloon {
         }
     }
 
+    // 当用户改变stats_polling_interval的配置时，会由src/vmm/src/lib.rs中的update_balloon_stats_config函数调用该函数
     pub fn update_stats_polling_interval(&mut self, interval_s: u16) -> Result<(), BalloonError> {
         if self.stats_polling_interval_s == interval_s {
             return Ok(());
