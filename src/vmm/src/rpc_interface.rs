@@ -29,6 +29,10 @@ use crate::vmm_config::balloon::{
     BalloonConfigError, BalloonDeviceConfig, BalloonStats, BalloonUpdateConfig,
     BalloonUpdateStatsConfig,
 };
+use crate::vmm_config::faascale_mem::{
+    FaascaleMemConfigError, FaascaleMemDeviceConfig, FaascaleMemStats,
+    FaascaleMemUpdateStatsConfig,
+};
 use crate::vmm_config::boot_source::{BootSourceConfig, BootSourceConfigError};
 use crate::vmm_config::drive::{BlockDeviceConfig, BlockDeviceUpdateConfig, DriveError};
 use crate::vmm_config::entropy::{EntropyDeviceConfig, EntropyDeviceError};
@@ -65,6 +69,10 @@ pub enum VmmAction {
     GetBalloonConfig,
     /// Get the ballon device latest statistics.
     GetBalloonStats,
+    /// Get the faascale-mem device configuration.
+    GetFaascaleMemConfig,
+    /// Get the faascale-mem device latest statistics.
+    GetFaascaleMemStats,
     /// Get complete microVM configuration in JSON format.
     GetFullVmConfig,
     /// Get MMDS contents.
@@ -102,6 +110,10 @@ pub enum VmmAction {
     /// `BalloonDeviceConfig` as input. This action can only be called before the microVM
     /// has booted.
     SetBalloonDevice(BalloonDeviceConfig),
+    /// Set the faascale-mem device or update the one that already exists using the
+    /// `FaascaleMemDeviceConfig` as input. This action can only be called before the microVM
+    /// has booted.
+    SetFaascaleMemDevice(FaascaleMemDeviceConfig),
     /// Set the MMDS configuration.
     SetMmdsConfiguration(MmdsConfig),
     /// Set the vsock device or update the one that already exists using the
@@ -121,6 +133,8 @@ pub enum VmmAction {
     UpdateBalloon(BalloonUpdateConfig),
     /// Update the balloon statistics polling interval, after microVM start.
     UpdateBalloonStatistics(BalloonUpdateStatsConfig),
+    /// Update the faascale-mem statistics polling interval, after microVM start.
+    UpdateFaascaleMemStatistics(FaascaleMemUpdateStatsConfig),
     /// Update existing block device properties such as `path_on_host` or `rate_limiter`.
     UpdateBlockDevice(BlockDeviceUpdateConfig),
     /// Update a network interface, after microVM start. Currently, the only updatable properties
@@ -137,6 +151,9 @@ pub enum VmmActionError {
     /// The action `SetBalloonDevice` failed because of bad user input.
     #[error("{0}")]
     BalloonConfig(BalloonConfigError),
+    /// The action `SetFaascaleMemDevice` failed because of bad user input.
+    #[error("{0}")]
+    FaascaleMemConfig(FaascaleMemConfigError),
     /// The action `ConfigureBootSource` failed because of bad user input.
     #[error("{0}")]
     BootSource(BootSourceConfigError),
@@ -208,6 +225,10 @@ pub enum VmmData {
     BalloonConfig(BalloonDeviceConfig),
     /// The latest balloon device statistics.
     BalloonStats(BalloonStats),
+    /// The balloon device configuration.
+    FaascaleMemConfig(FaascaleMemDeviceConfig),
+    /// The latest faascale-mem device statistics.
+    FaascaleMemStats(FaascaleMemStats),
     /// No data is sent on the channel.
     Empty,
     /// The complete microVM configuration in JSON format.
@@ -400,6 +421,7 @@ impl<'a> PrebootApiController<'a> {
                 .map(|()| VmmData::Empty)
                 .map_err(VmmActionError::Metrics),
             GetBalloonConfig => self.balloon_config(),
+            GetFaascaleMemConfig => self.faascale_mem_config(),
             GetFullVmConfig => {
                 warn!(
                     "If the VM was restored from snapshot, boot-source, machine-config.smt, and \
@@ -424,6 +446,7 @@ impl<'a> PrebootApiController<'a> {
             }
             PutMMDS(value) => self.put_mmds(value),
             SetBalloonDevice(config) => self.set_balloon_device(config),
+            SetFaascaleMemDevice(config) => self.set_faascale_mem_device(config),
             SetVsockDevice(config) => self.set_vsock_device(config),
             SetMmdsConfiguration(config) => self.set_mmds_config(config),
             StartMicroVm => self.start_microvm(),
@@ -437,6 +460,8 @@ impl<'a> PrebootApiController<'a> {
             | GetBalloonStats
             | UpdateBalloon(_)
             | UpdateBalloonStatistics(_)
+            | GetFaascaleMemStats
+            | UpdateFaascaleMemStatistics(_)
             | UpdateBlockDevice(_)
             | UpdateNetworkInterface(_) => Err(VmmActionError::OperationNotSupportedPreBoot),
             #[cfg(target_arch = "x86_64")]
@@ -450,6 +475,14 @@ impl<'a> PrebootApiController<'a> {
             .get_config()
             .map(VmmData::BalloonConfig)
             .map_err(VmmActionError::BalloonConfig)
+    }
+
+    fn faascale_mem_config(&mut self) -> ActionResult {
+        self.vm_resources
+            .faascale_mem
+            .get_config()
+            .map(VmmData::FaascaleMemConfig)
+            .map_err(VmmActionError::FaascaleMemConfig)
     }
 
     fn insert_block_device(&mut self, cfg: BlockDeviceConfig) -> ActionResult {
@@ -474,6 +507,14 @@ impl<'a> PrebootApiController<'a> {
             .set_balloon_device(cfg)
             .map(|()| VmmData::Empty)
             .map_err(VmmActionError::BalloonConfig)
+    }
+
+    fn set_faascale_mem_device(&mut self, cfg: FaascaleMemDeviceConfig) -> ActionResult {
+        self.boot_path = true;
+        self.vm_resources
+            .set_faascale_mem_device(cfg)
+            .map(|()| VmmData::Empty)
+            .map_err(VmmActionError::FaascaleMemConfig)
     }
 
     fn set_boot_source(&mut self, cfg: BootSourceConfig) -> ActionResult {
@@ -632,6 +673,20 @@ impl RuntimeApiController {
                 .latest_balloon_stats()
                 .map(VmmData::BalloonStats)
                 .map_err(|err| VmmActionError::BalloonConfig(BalloonConfigError::from(err))),
+            GetFaascaleMemConfig => self
+                .vmm
+                .lock()
+                .expect("Poisoned lock")
+                .faascale_mem_config()
+                .map(|state| VmmData::FaascaleMemConfig(FaascaleMemDeviceConfig::from(state)))
+                .map_err(|err| VmmActionError::FaascaleMemConfig(FaascaleMemConfigError::from(err))),
+            GetFaascaleMemStats => self
+                .vmm
+                .lock()
+                .expect("Poisoned lock")
+                .latest_faascale_mem_stats()
+                .map(VmmData::FaascaleMemStats)
+                .map_err(|err| VmmActionError::FaascaleMemConfig(FaascaleMemConfigError::from(err))),
             GetFullVmConfig => Ok(VmmData::FullVmConfig((&self.vm_resources).into())),
             GetMMDS => self.get_mmds(),
             GetVmMachineConfig => Ok(VmmData::MachineConfiguration(MachineConfig::from(
@@ -663,6 +718,13 @@ impl RuntimeApiController {
                 .update_balloon_stats_config(balloon_stats_update.stats_polling_interval_s)
                 .map(|_| VmmData::Empty)
                 .map_err(|err| VmmActionError::BalloonConfig(BalloonConfigError::from(err))),
+            UpdateFaascaleMemStatistics(faascale_mem_stats_update) => self
+                .vmm
+                .lock()
+                .expect("Poisoned lock")
+                .update_faascale_mem_stats_config(faascale_mem_stats_update.stats_polling_interval_s)
+                .map(|_| VmmData::Empty)
+                .map_err(|err| VmmActionError::FaascaleMemConfig(FaascaleMemConfigError::from(err))),
             UpdateBlockDevice(new_cfg) => self.update_block_device(new_cfg),
             UpdateNetworkInterface(netif_update) => self.update_net_rate_limiters(netif_update),
 
@@ -675,6 +737,7 @@ impl RuntimeApiController {
             | LoadSnapshot(_)
             | PutCpuConfiguration(_)
             | SetBalloonDevice(_)
+            | SetFaascaleMemDevice(_)
             | SetVsockDevice(_)
             | SetMmdsConfiguration(_)
             | SetEntropyDevice(_)

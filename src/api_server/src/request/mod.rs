@@ -3,6 +3,7 @@
 
 pub mod actions;
 pub mod balloon;
+pub mod faascale_mem;
 pub mod boot_source;
 pub mod cpu_configuration;
 pub mod drive;

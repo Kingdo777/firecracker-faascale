@@ -14,6 +14,7 @@ use utils::net::ipv4addr::is_link_local_valid;
 use crate::cpu_config::templates::CustomCpuTemplate;
 use crate::device_manager::persist::SharedDeviceType;
 use crate::vmm_config::balloon::*;
+use crate::vmm_config::faascale_mem::*;
 use crate::vmm_config::boot_source::{
     BootConfig, BootSource, BootSourceConfig, BootSourceConfigError,
 };
@@ -37,6 +38,9 @@ pub enum Error {
     /// Balloon device configuration error.
     #[error("Balloon device error: {0}")]
     BalloonDevice(BalloonConfigError),
+    /// Faascale-mem device configuration error.
+    #[error("FaascaleMem device error: {0}")]
+    FaascaleMemDevice(FaascaleMemConfigError),
     /// Block device configuration error.
     #[error("Block device error: {0}")]
     BlockDevice(DriveError),
@@ -80,6 +84,8 @@ pub enum Error {
 pub struct VmmConfig {
     #[serde(rename = "balloon")]
     balloon_device: Option<BalloonDeviceConfig>,
+    #[serde(rename = "faascale-mem")]
+    faascale_mem_device: Option<FaascaleMemDeviceConfig>,
     #[serde(rename = "drives")]
     block_devices: Vec<BlockDeviceConfig>,
     #[serde(rename = "boot-source")]
@@ -116,6 +122,8 @@ pub struct VmResources {
     pub vsock: VsockBuilder,
     /// The balloon device.
     pub balloon: BalloonBuilder,
+    /// The faascale-mem device.
+    pub faascale_mem: FaascaleMemBuilder,
     /// The network devices builder.
     pub net_builder: NetBuilder,
     /// The entropy device builder.
@@ -181,6 +189,10 @@ impl VmResources {
             resources.set_balloon_device(balloon_config)?;
         }
 
+        if let Some(faascale_mem_config) = vmm_config.faascale_mem_device {
+            resources.set_faascale_mem_device(faascale_mem_config)?;
+        }
+
         // Init the data store from file, if present.
         if let Some(data) = metadata_json {
             resources.locked_mmds_or_default().put_data(
@@ -228,6 +240,10 @@ impl VmResources {
 
             SharedDeviceType::Balloon(balloon) => {
                 self.balloon.set_device(balloon);
+            }
+
+            SharedDeviceType::FaascaleMem(faascale_mem) => {
+                self.faascale_mem.set_device(faascale_mem);
             }
 
             SharedDeviceType::Vsock(vsock) => {
@@ -338,6 +354,14 @@ impl VmResources {
         }
 
         self.balloon.set(config)
+    }
+
+    /// Sets a faascale-mem device to be attached when the VM starts.
+    pub fn set_faascale_mem_device(
+        &mut self,
+        config: FaascaleMemDeviceConfig,
+    ) -> Result<FaascaleMemConfigError> {
+        self.faascale_mem.set(config)
     }
 
     /// Obtains the boot source hooks (kernel fd, command line creation and validation).
@@ -463,6 +487,7 @@ impl From<&VmResources> for VmmConfig {
     fn from(resources: &VmResources) -> Self {
         VmmConfig {
             balloon_device: resources.balloon.get_config().ok(),
+            faascale_mem_device: resources.faascale_mem.get_config().ok(),
             block_devices: resources.block.configs(),
             boot_source: resources.boot_source_config().clone(),
             cpu_config: None,
@@ -571,6 +596,7 @@ mod tests {
             block: default_blocks(),
             vsock: Default::default(),
             balloon: Default::default(),
+            faascale_mem: Default::default(),
             net_builder: default_net_builder(),
             mmds: None,
             boot_timer: false,

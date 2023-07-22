@@ -9,6 +9,7 @@
 use std::any::Any;
 use std::io::Error as IOError;
 
+pub mod faascale_mem;
 pub mod balloon;
 pub mod block;
 pub mod device;
@@ -22,6 +23,7 @@ pub mod test_utils;
 pub mod vsock;
 
 pub use self::balloon::*;
+pub use self::faascale_mem::*;
 pub use self::block::*;
 pub use self::device::*;
 pub use self::mmio::*;
@@ -54,6 +56,7 @@ pub const TYPE_NET: u32 = 1;
 pub const TYPE_BLOCK: u32 = 2;
 pub const TYPE_RNG: u32 = 4;
 pub const TYPE_BALLOON: u32 = 5;
+pub const TYPE_FAASCALE_MEM: u32 = 30; //必须和linux/virtio_ids.h中进行对应，从而确定device和device的关联
 
 /// Offset from the base MMIO address of a virtio device used by the guest to notify the device of
 /// queue events.

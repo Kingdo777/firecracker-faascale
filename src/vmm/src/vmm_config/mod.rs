@@ -11,6 +11,8 @@ use libc::O_NONBLOCK;
 use rate_limiter::{BucketUpdate, RateLimiter, TokenBucket};
 use serde::{Deserialize, Serialize};
 
+/// Wrapper for configuring the faascale-mem device.
+pub mod faascale_mem;
 /// Wrapper for configuring the balloon device.
 pub mod balloon;
 /// Wrapper for configuring the microVM boot source.

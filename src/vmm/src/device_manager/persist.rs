@@ -21,6 +21,8 @@ use super::mmio::*;
 use crate::arch::DeviceType;
 use crate::devices::virtio::balloon::persist::{BalloonConstructorArgs, BalloonState};
 use crate::devices::virtio::balloon::{Balloon, Error as BalloonError};
+use crate::devices::virtio::faascale_mem::persist::{FaascaleMemConstructorArgs, FaascaleMemState};
+use crate::devices::virtio::faascale_mem::{FaascaleMem, Error as FaascaleMemError};
 use crate::devices::virtio::block::persist::{BlockConstructorArgs, BlockState};
 use crate::devices::virtio::block::{Block, Error as BlockError};
 use crate::devices::virtio::net::persist::{Error as NetError, NetConstructorArgs, NetState};
@@ -35,7 +37,7 @@ use crate::devices::virtio::vsock::persist::{
 };
 use crate::devices::virtio::vsock::{Vsock, VsockError, VsockUnixBackend, VsockUnixBackendError};
 use crate::devices::virtio::{
-    MmioTransport, VirtioDevice, TYPE_BALLOON, TYPE_BLOCK, TYPE_NET, TYPE_RNG, TYPE_VSOCK,
+    MmioTransport, VirtioDevice, TYPE_BALLOON, TYPE_BLOCK, TYPE_NET, TYPE_RNG, TYPE_VSOCK, TYPE_FAASCALE_MEM
 };
 use crate::resources::VmResources;
 use crate::vmm_config::mmds::MmdsConfigError;
@@ -45,6 +47,7 @@ use crate::EventManager;
 #[derive(Debug, derive_more::From)]
 pub enum Error {
     Balloon(BalloonError),
+    FaascaleMem(FaascaleMemError),
     Block(BlockError),
     DeviceManager(super::mmio::Error),
     MmioTransport,
@@ -65,6 +68,20 @@ pub struct ConnectedBalloonState {
     pub device_id: String,
     /// Device state.
     pub device_state: BalloonState,
+    /// Mmio transport state.
+    pub transport_state: MmioTransportState,
+    /// VmmResources.
+    pub device_info: MMIODeviceInfo,
+}
+
+/// Holds the state of a faascale-mem device connected to the MMIO space.
+// NOTICE: Any changes to this structure require a snapshot version bump.
+#[derive(Clone, Versionize)]
+pub struct ConnectedFaascaleMemState {
+    /// Device identifier.
+    pub device_id: String,
+    /// Device state.
+    pub device_state: FaascaleMemState,
     /// Mmio transport state.
     pub transport_state: MmioTransportState,
     /// VmmResources.
@@ -179,6 +196,9 @@ pub struct DeviceStates {
     /// Balloon device state.
     #[version(start = 2, ser_fn = "balloon_serialize")]
     pub balloon_device: Option<ConnectedBalloonState>,
+    /// Faascale-mem device state.
+    #[version(start = 2, ser_fn = "faascale_mem_serialize")]
+    pub faascale_mem_device: Option<ConnectedFaascaleMemState>,
     /// Mmds version.
     #[version(start = 3, ser_fn = "mmds_version_serialize")]
     pub mmds_version: Option<MmdsVersionState>,
@@ -193,6 +213,7 @@ pub enum SharedDeviceType {
     Block(Arc<Mutex<Block>>),
     Network(Arc<Mutex<Net>>),
     Balloon(Arc<Mutex<Balloon>>),
+    FaascaleMem(Arc<Mutex<FaascaleMem>>),
     Vsock(Arc<Mutex<Vsock<VsockUnixBackend>>>),
     Entropy(Arc<Mutex<Entropy>>),
 }
@@ -202,6 +223,16 @@ impl DeviceStates {
         if target_version < 2 && self.balloon_device.is_some() {
             return Err(VersionizeError::Semantic(
                 "Target version does not implement the virtio-balloon device.".to_owned(),
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn faascale_mem_serialize(&mut self, target_version: u16) -> VersionizeResult<()> {
+        if target_version < 2 && self.faascale_mem_device.is_some() {
+            return Err(VersionizeError::Semantic(
+                "Target version does not implement the virtio-faascale_mem device.".to_owned(),
             ));
         }
 
@@ -247,6 +278,7 @@ impl<'a> Persist<'a> for MMIODeviceManager {
     fn save(&self) -> Self::State {
         let mut states = DeviceStates {
             balloon_device: None,
+            faascale_mem_device: None,
             block_devices: Vec::new(),
             net_devices: Vec::new(),
             vsock_device: None,
@@ -292,6 +324,19 @@ impl<'a> Persist<'a> for MMIODeviceManager {
                     states.balloon_device = Some(ConnectedBalloonState {
                         device_id: devid.clone(),
                         device_state: balloon_state,
+                        transport_state,
+                        device_info: device_info.clone(),
+                    });
+                }
+                TYPE_FAASCALE_MEM => {
+                    let faascale_mem_state = locked_device
+                        .as_any()
+                        .downcast_ref::<FaascaleMem>()
+                        .unwrap()
+                        .save();
+                    states.faascale_mem_device = Some(ConnectedFaascaleMemState {
+                        device_id: devid.clone(),
+                        device_state: faascale_mem_state,
                         transport_state,
                         device_info: device_info.clone(),
                     });
@@ -479,6 +524,27 @@ impl<'a> Persist<'a> for MMIODeviceManager {
                 &balloon_state.device_id,
                 &balloon_state.transport_state,
                 &balloon_state.device_info,
+                constructor_args.event_manager,
+            )?;
+        }
+
+        if let Some(faascale_mem_state) = &state.faascale_mem_device {
+            let device = Arc::new(Mutex::new(FaascaleMem::restore(
+                FaascaleMemConstructorArgs { mem: mem.clone() },
+                &faascale_mem_state.device_state,
+            )?));
+
+            (constructor_args.for_each_restored_device)(
+                constructor_args.vm_resources,
+                SharedDeviceType::FaascaleMem(device.clone()),
+            );
+
+            restore_helper(
+                device.clone(),
+                device,
+                &faascale_mem_state.device_id,
+                &faascale_mem_state.transport_state,
+                &faascale_mem_state.device_info,
                 constructor_args.event_manager,
             )?;
         }

@@ -84,10 +84,8 @@ use crate::device_manager::legacy::PortIODeviceManager;
 use crate::device_manager::mmio::MMIODeviceManager;
 use crate::devices::legacy::{IER_RDA_BIT, IER_RDA_OFFSET};
 use crate::devices::virtio::balloon::Error as BalloonError;
-use crate::devices::virtio::{
-    Balloon, BalloonConfig, BalloonStats, Block, MmioTransport, Net, BALLOON_DEV_ID, TYPE_BALLOON,
-    TYPE_BLOCK, TYPE_NET,
-};
+use crate::devices::virtio::faascale_mem::Error as FaascaleMemError;
+use crate::devices::virtio::{Balloon, FaascaleMem, BalloonConfig, FaascaleMemConfig, BalloonStats, FaascaleMemStats, Block, MmioTransport, Net, BALLOON_DEV_ID, TYPE_BALLOON, TYPE_FAASCALE_MEM, TYPE_BLOCK, TYPE_NET, FAASCALE_MEM_DEV_ID};
 use crate::devices::BusDevice;
 use crate::memory_snapshot::SnapshotMemory;
 use crate::persist::{MicrovmState, MicrovmStateError, VmInfo};
@@ -733,7 +731,36 @@ impl Vmm {
         }
     }
 
+    /// Returns a reference to the faascale-mem device if present.
+    pub fn faascale_mem_config(&self) -> std::result::Result<FaascaleMemConfig, FaascaleMemError> {
+        if let Some(busdev) = self.get_bus_device(DeviceType::Virtio(TYPE_FAASCALE_MEM), FAASCALE_MEM_DEV_ID)
+        {
+            let virtio_device = busdev
+                .lock()
+                .expect("Poisoned lock")
+                .as_any()
+                .downcast_ref::<MmioTransport>()
+                // Only MmioTransport implements BusDevice at this point.
+                .expect("Unexpected BusDevice type")
+                .device();
+
+            let config = virtio_device
+                .lock()
+                .expect("Poisoned lock")
+                .as_mut_any()
+                .downcast_mut::<FaascaleMem>()
+                .unwrap()
+                .config();
+
+            Ok(config)
+        } else {
+            Err(FaascaleMemError::DeviceNotFound)
+        }
+    }
+
     /// Returns the latest balloon statistics if they are enabled.
+    /// 获取最新的stats，需要注意的是，再返回之前，需要通过configspace来更新前四项的信息
+    /// 并且该函数仅仅在stats_polling_interval_s>0时才有效
     pub fn latest_balloon_stats(&self) -> std::result::Result<BalloonStats, BalloonError> {
         if let Some(busdev) = self.get_bus_device(DeviceType::Virtio(TYPE_BALLOON), BALLOON_DEV_ID)
         {
@@ -762,7 +789,38 @@ impl Vmm {
         }
     }
 
+    /// Returns the latest faascale-mem statistics if they are enabled.
+    pub fn latest_faascale_mem_stats(&self) -> std::result::Result<FaascaleMemStats, FaascaleMemError> {
+        if let Some(busdev) = self.get_bus_device(DeviceType::Virtio(TYPE_FAASCALE_MEM), FAASCALE_MEM_DEV_ID)
+        {
+            let virtio_device = busdev
+                .lock()
+                .expect("Poisoned lock")
+                .as_any()
+                .downcast_ref::<MmioTransport>()
+                // Only MmioTransport implements BusDevice at this point.
+                .expect("Unexpected BusDevice type")
+                .device();
+
+            let latest_stats = virtio_device
+                .lock()
+                .expect("Poisoned lock")
+                .as_mut_any()
+                .downcast_mut::<FaascaleMem>()
+                .unwrap()
+                .latest_stats()
+                .ok_or(FaascaleMemError::StatisticsDisabled)
+                .map(|stats| stats.clone())?;
+
+            Ok(latest_stats)
+        } else {
+            Err(FaascaleMemError::DeviceNotFound)
+        }
+    }
+
     /// Updates configuration for the balloon device target size.
+    /// 当用户修改了balloon的大小时，会触发这个函数，此函数会调用balloon的update_size，以修改configspace中的信息，然后通知guest读取
+    /// configspace中，用户要求的最新的balloon的大小，从而inflate或者deflate气球
     pub fn update_balloon_config(
         &mut self,
         amount_mib: u32,
@@ -801,6 +859,7 @@ impl Vmm {
     }
 
     /// Updates configuration for the balloon device as described in `balloon_stats_update`.
+    /// 如果balloon的stats_polling_interval_s配置发生了变化，则会触发该函数，并最终调用update_stats_polling_interval来修改timeTD
     pub fn update_balloon_stats_config(
         &mut self,
         stats_polling_interval_s: u16,
@@ -828,6 +887,37 @@ impl Vmm {
             Ok(())
         } else {
             Err(BalloonError::DeviceNotFound)
+        }
+    }
+
+    /// Updates configuration for the faascale-mem device as described in `balloon_stats_update`.
+    pub fn update_faascale_mem_stats_config(
+        &mut self,
+        stats_polling_interval_s: u16,
+    ) -> std::result::Result<(), FaascaleMemError> {
+        if let Some(busdev) = self.get_bus_device(DeviceType::Virtio(TYPE_FAASCALE_MEM), FAASCALE_MEM_DEV_ID)
+        {
+            {
+                let virtio_device = busdev
+                    .lock()
+                    .expect("Poisoned lock")
+                    .as_any()
+                    .downcast_ref::<MmioTransport>()
+                    // Only MmioTransport implements BusDevice at this point.
+                    .expect("Unexpected BusDevice type")
+                    .device();
+
+                virtio_device
+                    .lock()
+                    .expect("Poisoned lock")
+                    .as_mut_any()
+                    .downcast_mut::<FaascaleMem>()
+                    .unwrap()
+                    .update_stats_polling_interval(stats_polling_interval_s)?;
+            }
+            Ok(())
+        } else {
+            Err(FaascaleMemError::DeviceNotFound)
         }
     }
 

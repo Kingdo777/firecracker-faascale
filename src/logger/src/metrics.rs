@@ -461,6 +461,24 @@ pub struct BalloonDeviceMetrics {
     pub event_fails: SharedIncMetric,
 }
 
+/// FaascaleMem Device associated metrics.
+#[derive(Default, Serialize)]
+pub struct FaascaleMemMetrics {
+    /// Number of times when activate failed on a balloon device.
+    pub activate_fails: SharedIncMetric,
+    /// Number of balloon device inflations.
+    pub populate_count: SharedIncMetric,
+    // Number of balloon statistics updates from the driver.
+    pub stats_updates_count: SharedIncMetric,
+    // Number of balloon statistics update failures.
+    pub stats_update_fails: SharedIncMetric,
+    /// Number of balloon device deflations.
+    pub depopulate_count: SharedIncMetric,
+    /// Number of times when handling events on a balloon device failed.
+    pub event_fails: SharedIncMetric,
+}
+
+
 /// Block Device associated metrics.
 #[derive(Default, Serialize)]
 pub struct BlockDeviceMetrics {
@@ -829,6 +847,8 @@ pub struct FirecrackerMetrics {
     pub api_server: ApiServerMetrics,
     /// A balloon device's related metrics.
     pub balloon: BalloonDeviceMetrics,
+    /// A balloon device's related metrics.
+    pub faascale_mem: FaascaleMemMetrics,
     /// A block device's related metrics.
     pub block: BlockDeviceMetrics,
     /// Metrics related to deprecated API calls.

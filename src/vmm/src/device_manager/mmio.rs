@@ -27,7 +27,7 @@ use crate::devices::legacy::RTCDevice;
 use crate::devices::legacy::SerialDevice;
 use crate::devices::pseudo::BootTimer;
 use crate::devices::virtio::{
-    Balloon, Block, Entropy, MmioTransport, Net, VirtioDevice, TYPE_BALLOON, TYPE_BLOCK, TYPE_NET,
+    Balloon, FaascaleMem, Block, Entropy, MmioTransport, Net, VirtioDevice, TYPE_BALLOON, TYPE_FAASCALE_MEM,TYPE_BLOCK, TYPE_NET,
     TYPE_RNG, TYPE_VSOCK,
 };
 use crate::devices::BusDevice;
@@ -403,6 +403,16 @@ impl MMIODeviceManager {
                     if balloon.is_activated() {
                         info!("kick balloon {}.", id);
                         balloon.process_virtio_queues();
+                    }
+                }
+                TYPE_FAASCALE_MEM => {
+                    let faascale = virtio.as_mut_any().downcast_mut::<FaascaleMem>().unwrap();
+                    // If device is activated, kick the faascale-mem queue(s) to make up for any
+                    // pending or in-flight epoll events we may have not captured in snapshot.
+                    // Stats queue doesn't need kicking as it is notified via a `timer_fd`.
+                    if faascale.is_activated() {
+                        info!("kick faascale-mem {}.", id);
+                        faascale.process_virtio_queues();
                     }
                 }
                 TYPE_BLOCK => {

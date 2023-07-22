@@ -10,6 +10,7 @@ use vmm::rpc_interface::{VmmAction, VmmActionError};
 use super::VmmData;
 use crate::request::actions::parse_put_actions;
 use crate::request::balloon::{parse_get_balloon, parse_patch_balloon, parse_put_balloon};
+use crate::request::faascale_mem::{parse_get_faascale_mem, parse_patch_faascale_mem, parse_put_faascale_mem};
 use crate::request::boot_source::parse_put_boot_source;
 use crate::request::cpu_configuration::parse_put_cpu_config;
 use crate::request::drive::{parse_patch_drive, parse_put_drive};
@@ -98,6 +99,7 @@ impl ParsedRequest {
         match (request.method(), path, request.body.as_ref()) {
             (Method::Get, "", None) => parse_get_instance_info(),
             (Method::Get, "balloon", None) => parse_get_balloon(path_tokens.get(1)),
+            (Method::Get, "faascale_mem", None) => parse_get_faascale_mem(path_tokens.get(1)),
             (Method::Get, "version", None) => parse_get_version(),
             (Method::Get, "vm", None) if path_tokens.get(1) == Some(&"config") => {
                 Ok(ParsedRequest::new_sync(VmmAction::GetFullVmConfig))
@@ -107,6 +109,7 @@ impl ParsedRequest {
             (Method::Get, _, Some(_)) => method_to_error(Method::Get),
             (Method::Put, "actions", Some(body)) => parse_put_actions(body),
             (Method::Put, "balloon", Some(body)) => parse_put_balloon(body),
+            (Method::Put, "faascale_mem", Some(body)) => parse_put_faascale_mem(body),
             (Method::Put, "boot-source", Some(body)) => parse_put_boot_source(body),
             (Method::Put, "cpu-config", Some(body)) => parse_put_cpu_config(body),
             (Method::Put, "drives", Some(body)) => parse_put_drive(body, path_tokens.get(1)),
@@ -125,6 +128,7 @@ impl ParsedRequest {
             (Method::Put, "entropy", Some(body)) => parse_put_entropy(body),
             (Method::Put, _, None) => method_to_error(Method::Put),
             (Method::Patch, "balloon", Some(body)) => parse_patch_balloon(body, path_tokens.get(1)),
+            (Method::Patch, "faascale_mem", Some(body)) => parse_patch_faascale_mem(body, path_tokens.get(1)),
             (Method::Patch, "drives", Some(body)) => parse_patch_drive(body, path_tokens.get(1)),
             (Method::Patch, "machine-config", Some(body)) => parse_patch_machine_config(body),
             (Method::Patch, "mmds", Some(body)) => parse_patch_mmds(body),
@@ -176,7 +180,11 @@ impl ParsedRequest {
                 VmmData::BalloonConfig(balloon_config) => {
                     Self::success_response_with_data(balloon_config)
                 }
+                VmmData::FaascaleMemConfig(faascale_mem_config) => {
+                    Self::success_response_with_data(faascale_mem_config)
+                }
                 VmmData::BalloonStats(stats) => Self::success_response_with_data(stats),
+                VmmData::FaascaleMemStats(stats) => Self::success_response_with_data(stats),
                 VmmData::InstanceInformation(info) => Self::success_response_with_data(info),
                 VmmData::VmmVersion(version) => Self::success_response_with_data(
                     &serde_json::json!({ "firecracker_version": version.as_str() }),
@@ -558,6 +566,12 @@ pub mod tests {
                     http_response(&serde_json::to_string(cfg).unwrap(), 200)
                 }
                 VmmData::BalloonStats(stats) => {
+                    http_response(&serde_json::to_string(stats).unwrap(), 200)
+                }
+                VmmData::FaascaleMemConfig(cfg) => {
+                    http_response(&serde_json::to_string(cfg).unwrap(), 200)
+                }
+                VmmData::FaascaleMemStats(stats) => {
                     http_response(&serde_json::to_string(stats).unwrap(), 200)
                 }
                 VmmData::Empty => http_response("", 204),

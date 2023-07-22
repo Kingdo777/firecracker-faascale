@@ -28,6 +28,11 @@ pub(crate) fn report_balloon_event_fail(err: virtio::balloon::Error) {
     METRICS.balloon.event_fails.inc();
 }
 
+pub(crate) fn report_faascale_mem_event_fail(err: virtio::faascale_mem::Error) {
+    error!("{:?}", err);
+    METRICS.faascale_mem.event_fails.inc();
+}
+
 #[derive(Debug)]
 pub enum Error {
     /// Failed to read from the TAP device.

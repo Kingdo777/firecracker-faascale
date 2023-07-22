@@ -44,9 +44,7 @@ use crate::devices::legacy::RTCDevice;
 use crate::devices::legacy::{
     EventFdTrigger, ReadableFd, SerialDevice, SerialEventsWrapper, SerialWrapper,
 };
-use crate::devices::virtio::{
-    Balloon, Block, Entropy, MmioTransport, Net, VirtioDevice, Vsock, VsockUnixBackend,
-};
+use crate::devices::virtio::{Balloon, Block, Entropy, FaascaleMem, MmioTransport, Net, VirtioDevice, Vsock, VsockUnixBackend};
 use crate::persist::{MicrovmState, MicrovmStateError};
 use crate::resources::VmResources;
 use crate::vmm_config::boot_source::BootConfig;
@@ -320,6 +318,10 @@ pub fn build_microvm_for_boot(
 
     if let Some(balloon) = vm_resources.balloon.get() {
         attach_balloon_device(&mut vmm, &mut boot_cmdline, balloon, event_manager)?;
+    }
+
+    if let Some(faascale) = vm_resources.faascale_mem.get() {
+        attach_faascale_device(&mut vmm, &mut boot_cmdline, faascale, event_manager)?;
     }
 
     attach_block_devices(
@@ -1015,6 +1017,17 @@ fn attach_balloon_device(
     let id = String::from(balloon.lock().expect("Poisoned lock").id());
     // The device mutex mustn't be locked here otherwise it will deadlock.
     attach_virtio_device(event_manager, vmm, id, balloon.clone(), cmdline)
+}
+
+fn attach_faascale_device(
+    vmm: &mut Vmm,
+    cmdline: &mut LoaderKernelCmdline,
+    faascale_mem: &Arc<Mutex<FaascaleMem>>,
+    event_manager: &mut EventManager,
+) -> std::result::Result<(), StartMicrovmError> {
+    let id = String::from(faascale_mem.lock().expect("Poisoned lock").id());
+    // The device mutex mustn't be locked here otherwise it will deadlock.
+    attach_virtio_device(event_manager, vmm, id, faascale_mem.clone(), cmdline)
 }
 
 // Adds `O_NONBLOCK` to the stdout flags.

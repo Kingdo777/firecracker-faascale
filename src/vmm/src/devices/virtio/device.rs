@@ -17,6 +17,8 @@ use crate::devices::virtio::{AsAny, VIRTIO_MMIO_INT_CONFIG, VIRTIO_MMIO_INT_VRIN
 
 /// Enum that indicates if a VirtioDevice is inactive or has been activated
 /// and memory attached to it.
+/// 这是一个 Rust 的枚举类型，名为 DeviceState，它有两个成员：Inactive 和 Activated。
+/// Inactive 表示设备未激活时的状态，类型为 DeviceState。而 Activated 则表示设备已经激活的状态，它接收一个名为 GuestMemoryMmap 的参数，用于表示设备所附加的内存区域。
 pub enum DeviceState {
     Inactive,
     Activated(GuestMemoryMmap),

@@ -35,20 +35,26 @@ pub enum QueueError {
     UsedRing(#[from] GuestMemoryError),
 }
 
+
+/// virtio descriptor 表(Queue中的desc_table)中可能包括多个IO请求，每个IO请求可以是由多个descriptor组成，
+/// 每个IO请求的descriptor会组成一个链表,Descriptor是原生的结构，即实际存储在ring中的，
+/// 下文中的DescriptorChain是firecracker的封装，是由Descriptor进行初始化的
+///
 /// A virtio descriptor constraints with C representative.
 #[repr(C)]
 #[derive(Default, Clone, Copy)]
 struct Descriptor {
-    addr: u64,
-    len: u32,
-    flags: u16,
-    next: u16,
+    addr: u64,  // 存储IO请求在虚拟机内的内存地址，是一个GPA值；
+    len: u32,   // 示这个IO请求在内存中的长度；
+    flags: u16, // 指示这一行的数据是可读、可写（VRING_DESC_F_WRITE），是否是一个请求的最后一项（VRING_DESC_F_NEXT）；
+    next: u16,  // 每个IO请求都有可能包含了vring_desc表中的多行，next域就指明了这个请求的下一项在哪一行
 }
 
 // SAFETY: `Descriptor` is a POD and contains no padding.
 unsafe impl ByteValued for Descriptor {}
 
 /// A virtio descriptor chain.
+#[derive(Debug)]
 pub struct DescriptorChain<'a> {
     desc_table: GuestAddress,
     queue_size: u16,
