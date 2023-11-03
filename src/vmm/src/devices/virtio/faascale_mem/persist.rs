@@ -110,7 +110,7 @@ impl Persist<'_> for FaascaleMem {
     ) -> std::result::Result<Self, Self::Error> {
         // We can safely create the faascale-mem with arbitrary flags and
         // num_pages because we will overwrite them after.
-        let mut faascale_mem = FaascaleMem::new(state.stats_polling_interval_s, true)?;
+        let mut faascale_mem = FaascaleMem::new(state.stats_polling_interval_s, true,true,true)?;
 
         let mut num_queues = NUM_QUEUES;
         // As per the virtio 1.1 specification, the statistics queue

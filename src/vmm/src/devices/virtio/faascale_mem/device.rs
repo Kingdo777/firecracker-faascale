@@ -99,6 +99,8 @@ unsafe impl ByteValued for FaascaleMemStat {}
 #[derive(Clone, Default, Debug, PartialEq, Eq, Serialize)]
 pub struct FaascaleMemConfig {
     pub stats_polling_interval_s: u16, // 轮询统计信息的时间间隔（以秒为单位）
+    pub pre_alloc_mem: bool,
+    pub pre_tdp_fault: bool,
 }
 
 // FaascaleMemStats holds statistics returned from the stats_queue.
@@ -185,6 +187,8 @@ pub struct FaascaleMem {
 
     // Implementation specific fields.
     pub(crate) restored: bool,
+    pub(crate) pre_alloc_mem: bool,
+    pub(crate) pre_tdp_fault: bool,
     pub(crate) stats_polling_interval_s: u16,
     pub(crate) stats_timer: TimerFd,
     // The index of the previous stats descriptor is saved because
@@ -197,6 +201,8 @@ impl FaascaleMem {
     pub fn new(
         stats_polling_interval_s: u16,
         restored: bool,
+        pre_alloc_mem: bool,
+        pre_tdp_fault: bool
     ) -> Result<FaascaleMem, FaascaleMemError> {
         let mut avail_features = 1u64 << VIRTIO_F_VERSION_1;
 
@@ -242,6 +248,8 @@ impl FaascaleMem {
             activate_evt: EventFd::new(libc::EFD_NONBLOCK).map_err(FaascaleMemError::EventFd)?,
             /// 用于激活的event
             restored,
+            pre_alloc_mem,
+            pre_tdp_fault,
             stats_polling_interval_s,
             stats_timer,
             stats_desc_index: None,
@@ -348,6 +356,8 @@ impl FaascaleMem {
                                 mem,
                                 range,
                                 self.restored,
+                                self.pre_alloc_mem,
+                                self.pre_tdp_fault,
                             ) {
                                 error!("Error populating memory range: {:?}", err);
                             }
@@ -495,6 +505,15 @@ impl FaascaleMem {
         self.stats_polling_interval_s
     }
 
+    pub fn pre_alloc_mem(&self) -> bool {
+        self.pre_alloc_mem
+    }
+
+    pub fn pre_tdp_fault(&self) -> bool {
+        self.pre_tdp_fault
+    }
+
+
     pub fn latest_stats(&mut self) -> Option<&FaascaleMemStats> {
         if self.stats_enabled() {
             Some(&self.latest_stats)
@@ -506,6 +525,8 @@ impl FaascaleMem {
     pub fn config(&self) -> FaascaleMemConfig {
         FaascaleMemConfig {
             stats_polling_interval_s: self.stats_polling_interval_s(),
+            pre_alloc_mem: self.pre_alloc_mem(),
+            pre_tdp_fault: self.pre_tdp_fault(),
         }
     }
 

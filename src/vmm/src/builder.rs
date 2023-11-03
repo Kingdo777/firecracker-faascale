@@ -55,6 +55,24 @@ use crate::vstate::vcpu::{Vcpu, VcpuConfig};
 use crate::vstate::vm::Vm;
 use crate::{device_manager, Error, EventManager, RestoreVcpusError, Vmm, VmmEventsObserver};
 
+extern crate lazy_static;
+use lazy_static::lazy_static;
+lazy_static! {
+   static ref GLOBAL_VM_FD: Mutex<i32> = Mutex::new(0);
+}
+
+/// set global vm fd for faascale_mem to pre-allocate memory
+pub fn set_global_vm_fd(fd: i32) {
+    let mut global_vm_fd = GLOBAL_VM_FD.lock().unwrap();
+    *global_vm_fd = fd;
+}
+
+/// get global vm fd for faascale_mem to pre-allocate memory
+pub fn get_global_vm_fd() -> i32 {
+    let global_vm_fd = GLOBAL_VM_FD.lock().unwrap();
+    *global_vm_fd
+}
+
 /// Errors associated with starting the instance.
 #[derive(Debug, thiserror::Error)]
 pub enum StartMicrovmError {
@@ -688,6 +706,8 @@ pub(crate) fn setup_kvm_vm(
         .map_err(Error::KvmContext)
         .map_err(Internal)?;
     let mut vm = Vm::new(kvm.fd()).map_err(Error::Vm).map_err(Internal)?;
+    set_global_vm_fd(vm.fd().as_raw_fd());
+    log::info!("VM-fd: {}",get_global_vm_fd());
     vm.memory_init(guest_memory, kvm.max_memslots(), track_dirty_pages)
         .map_err(Error::Vm)
         .map_err(Internal)?;

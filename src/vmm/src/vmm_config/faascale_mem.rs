@@ -64,12 +64,20 @@ pub struct FaascaleMemDeviceConfig {
     /// Interval in seconds between refreshing statistics.
     #[serde(default)]
     pub stats_polling_interval_s: u16,
+    /// If need to pre alloc memory for faascale blocks
+    #[serde(default)]
+    pub pre_alloc_mem: bool,
+    /// If need to pre handle tdp fault for faascale blocks
+    #[serde(default)]
+    pub pre_tdp_fault: bool,
 }
 
 impl From<FaascaleMemConfig> for FaascaleMemDeviceConfig {
     fn from(state: FaascaleMemConfig) -> Self {
         FaascaleMemDeviceConfig {
             stats_polling_interval_s: state.stats_polling_interval_s,
+            pre_alloc_mem: state.pre_alloc_mem,
+            pre_tdp_fault: state.pre_tdp_fault,
         }
     }
 }
@@ -106,6 +114,8 @@ impl FaascaleMemBuilder {
             // `restored` flag is false because this code path
             // is never called by snapshot restore functionality.
             false,
+            cfg.pre_alloc_mem,
+            cfg.pre_tdp_fault
         )?)));
 
         Ok(())

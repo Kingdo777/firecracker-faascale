@@ -7,10 +7,26 @@ use utils::vm_memory::{GuestAddress, GuestMemory, GuestMemoryMmap, GuestMemoryRe
 
 use super::{RemoveRegionError};
 
+use utils::{ioctl_iow_nr, ioctl_ioc_nr};
+use crate::builder::get_global_vm_fd;
+
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone, PartialEq)]
+pub struct kvm_userspace_prealloc_memory_region {
+    pub guest_phys_addr: u64,
+    pub memory_size: u64,
+}
+ioctl_iow_nr!(KVM_PREALLOC_USER_MEMORY_REGION,
+    kvm_bindings::KVMIO,
+    0x49,
+    kvm_userspace_prealloc_memory_region);
+
 pub(crate) fn populate_range(
     guest_memory: &GuestMemoryMmap,
     range: (GuestAddress, u64),
     restored: bool,
+    pre_mem_alloc:bool,
+    pre_tdp_alloc:bool
 ) -> std::result::Result<(), RemoveRegionError> {
     let (guest_address, range_len) = range;
 
@@ -44,8 +60,32 @@ pub(crate) fn populate_range(
 
         unsafe {
             let range_len = range_len as usize;
-            libc::memset(phys_address.cast(), 0 as libc::c_int, range_len);
+            //#################  touch every page in the range #################
+            if pre_mem_alloc{
+                let ret = libc::madvise(phys_address.cast(), range_len, libc::MADV_POPULATE_WRITE);
+                if ret < 0 {
+                    return Err(RemoveRegionError::MadviseFail(io::Error::last_os_error()));
+                }
+                libc::memcpy(phys_address.cast(), "KINGDO".as_ptr() as *const libc::c_void, 6);
+                log::info!("pre-mem-alloc, guest_phys_addr:{}, memory_size:{}", guest_address.0, range_len as u64)
+            }
+
+            // ################# for testing by guest-kernel
             libc::memcpy(phys_address.cast(), "KINGDO".as_ptr() as *const libc::c_void, 6);
+
+            //################# pre handle tdp-pagefault for per faascale-block-page #################
+            if pre_tdp_alloc{
+                // ioctl syscall is disabled while vcpu is running, we should disable the seccomp filter,
+                // details can be found in  https://github.com/firecracker-microvm/firecracker/blob/main/docs/seccompiler.md
+                libc::ioctl(get_global_vm_fd(), KVM_PREALLOC_USER_MEMORY_REGION() as libc::c_int,
+                            &kvm_userspace_prealloc_memory_region {
+                                guest_phys_addr: guest_address.0,
+                                memory_size: range_len as u64,
+                            },
+                );
+                log::info!("pre-tdp-fault at fd({}), guest_phys_addr:{}, memory_size:{}",get_global_vm_fd(), guest_address.0, range_len as u64);
+
+            }
         };
 
         Ok(())
