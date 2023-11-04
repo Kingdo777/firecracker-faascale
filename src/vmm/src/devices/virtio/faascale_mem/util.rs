@@ -66,7 +66,6 @@ pub(crate) fn populate_range(
                 if ret < 0 {
                     return Err(RemoveRegionError::MadviseFail(io::Error::last_os_error()));
                 }
-                libc::memcpy(phys_address.cast(), "KINGDO".as_ptr() as *const libc::c_void, 6);
                 log::info!("pre-mem-alloc, guest_phys_addr:{}, memory_size:{}", guest_address.0, range_len as u64)
             }
 
