@@ -62,11 +62,12 @@ pub(crate) fn populate_range(
             let range_len = range_len as usize;
             //#################  touch every page in the range #################
             if pre_mem_alloc{
+                let start_time = std::time::Instant::now();
                 let ret = libc::madvise(phys_address.cast(), range_len, libc::MADV_POPULATE_WRITE);
                 if ret < 0 {
                     return Err(RemoveRegionError::MadviseFail(io::Error::last_os_error()));
                 }
-                log::info!("pre-mem-alloc, guest_phys_addr:{}, memory_size:{}", guest_address.0, range_len as u64)
+                log::info!("pre-mem-alloc at guest_phys_addr:{} with memory_size:{}, took {}ms", guest_address.0, range_len as u64, start_time.elapsed().as_millis());
             }
 
             // ################# for testing by guest-kernel
@@ -74,6 +75,7 @@ pub(crate) fn populate_range(
 
             //################# pre handle tdp-pagefault for per faascale-block-page #################
             if pre_tdp_alloc{
+                let start_time = std::time::Instant::now();
                 // ioctl syscall is disabled while vcpu is running, we should disable the seccomp filter,
                 // details can be found in  https://github.com/firecracker-microvm/firecracker/blob/main/docs/seccompiler.md
                 libc::ioctl(get_global_vm_fd(), KVM_PREALLOC_USER_MEMORY_REGION() as libc::c_int,
@@ -82,8 +84,7 @@ pub(crate) fn populate_range(
                                 memory_size: range_len as u64,
                             },
                 );
-                log::info!("pre-tdp-fault at fd({}), guest_phys_addr:{}, memory_size:{}",get_global_vm_fd(), guest_address.0, range_len as u64);
-
+                log::info!("pre-tdp-fault use vmfd({}), at guest_phys_addr:{} with memory_size:{}, took {}ms",get_global_vm_fd(), guest_address.0, range_len as u64, start_time.elapsed().as_millis());
             }
         };
 
